@@ -2,7 +2,7 @@
 
 <html lang="en">
 <head>
-<title>WebVR + WebAR simple example</title>
+<title>WebVR simple example</title>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, user-scalable=no, 
     minimum-scale=1.0, maximum-scale=1.0, shrink-to-fit=no">
@@ -10,40 +10,26 @@
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <style>
-
-html, body {
-  width: 100%;
-  height: 100%;
-  background-color: #000;
-  color: #fff;
-  margin: 0px;
-  padding: 0;
+body {
+  font-family: monospace;
+  margin: 0;
   overflow: hidden;
+  position: fixed;
+  width: 100%;
+  height: 100vh;
+  -webkit-user-select: none;
+  user-select: none;
 }
-
 canvas {
   position: absolute;
   top: 0;
+  left: 0;
 }
-
 </style>
 </head>
 
 <body>
 </body>
-
-<script>
-// Configuratio for the WebVR polyfill. It has to be executed before the 
-// polyfill is loaded.
-WebVRConfig = {
-  BUFFER_SCALE: 1.0,
-};
-
-// TODO: Is this necessary?
-document.addEventListener('touchmove', function(e) {
-  e.preventDefault();
-});
-</script>
 
 <!-- three.js library -->
 <script src="libs/three/three.js"></script>
@@ -65,32 +51,17 @@ Daydream controller.  -->
 <!-- A helper library to handle an enter VR button.  -->
 <script src="libs/webvr-ui/webvr-ui.js"></script>
 
-<!-- A helper library to handle an enter VR button.  -->
-<script src="libs/three.ar.js/three.ar.js"></script>
-
 <script>
 
 var vrDisplay;
 
-// Check for an AR display
-THREE.ARUtils.getARDisplay().then(function(display) {
-  // If there is an AR display, use it
-  if (display) {
-    vrDisplay = display;
-    initAR();
+// Note that the WebVR polyfill will enable that at least there is one display 
+navigator.getVRDisplays().then(function(displays) {
+  if (displays.length > 0) {
+    vrDisplay = displays[0];
+    init();
     // Start drawing.
     vrDisplay.requestAnimationFrame(updateAndRender);
-  } else {
-    // If there is no AR display, go for VR.
-    // Note that the WebVR polyfill will enable that at least there is 
-    navigator.getVRDisplays().then(function(displays) {
-      if (displays.length > 0) {
-        vrDisplay = displays[0];
-        initVR();
-        // Start drawing.
-        vrDisplay.requestAnimationFrame(updateAndRender);
-      }
-    });
   }
 });
 
@@ -102,11 +73,14 @@ var vrControls;
 var vrEffect;
 var models = [];
 
-function initCommon(alpha) {
+var daydreamController;
+var gamepadButtonLastPressed = false; // Flag to make sure there is only 1 click
+
+function init() {
   // Setup three.js WebGL renderer. Note: Antialiasing is a big performance hit.
   // Only enable it if you actually need to.
   // Enable alpha and disable auto clear. The rendering loop wiill handle it.
-  renderer = new THREE.WebGLRenderer({antialias: false, alpha: alpha});
+  renderer = new THREE.WebGLRenderer({antialias: false});
   renderer.setPixelRatio(window.devicePixelRatio);
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.autoClear = false;
@@ -119,13 +93,14 @@ function initCommon(alpha) {
 
   // Create a three.js camera only if a camera does not already exist. Check
   // the initAR function for futher information.
-  camera = camera ? camera : new THREE.PerspectiveCamera(75, 
+  camera = new THREE.PerspectiveCamera(75, 
       window.innerWidth / window.innerHeight, 0.01, 100);
 
   // Apply VR headset positional data to camera.
   vrControls = new THREE.VRControls(camera);
 
-  // Apply VR stereo rendering to renderer.
+  // VREffect handles both monoscopic and stereoscopic rendering depending on
+  // the VRDisplay state (presentation mode was requested or not)
   vrEffect = new THREE.VREffect(renderer);
   vrEffect.setSize(window.innerWidth, window.innerHeight);
 
@@ -154,30 +129,8 @@ function initCommon(alpha) {
 
   // Allow to spawn a model using touch.
   window.addEventListener("touchstart", function() {
-    // If the VRDisplay allows for hit testing, try to get a hit and place
-    // a model in the hit location.
-    if (vrDisplay.hitTest) {
-      var hits = vrDisplay.hitTest(0.5, 0.5);
-      if (hits && hits.length > 0) {
-        spawnModelInFrontOfCamera();
-        // Reposition the last added model in the hit modelMatrix.
-        var model = models[models.length - 1];
-        model.matrix.fromArray(hits[0].modelMatrix);
-        model.matrix.decompose(model.position, model.orientation, model.scale);
-        return;
-      }
-    }
-    // If no model was placed, place it in front of the camera.
     spawnModelInFrontOfCamera();
   });
-
-}
-
-var daydreamController;
-var gamepadButtonLastPressed = false; // Flag to make sure there is only 1 click
-
-function initVR() {
-  initCommon(false);
 
   // Append the enter webvr button
   var options = {}
@@ -185,59 +138,15 @@ function initVR() {
   document.body.appendChild(enterVR.domElement);
 
   // Create the Daydream gamepad controller.
-  daydreamController = new THREE.DaydreamController();
-}
-
-var arView;
-var arReticle;
-
-function initAR() {
-  // The ARPerspectiveCamera is very similar to THREE.PerspectiveCamera,
-  // except when using an AR-capable browser, the camera uses
-  // the projection matrix provided from the device, so that the
-  // perspective camera's depth planes and field of view matches
-  // the physical camera on the device.
-  // The camera is created before the common initialization so the "regular"
-  // camera is not created and used in VRControls. Check the initCommon 
-  // function for futher information.
-  camera = new THREE.ARPerspectiveCamera(vrDisplay, 75,
-      window.innerWidth / window.innerHeight, 0.01, 100);
-
-  initCommon(true);
-
-  // Creating the ARView, which is the object that handles
-  // the rendering of the camera stream behind the three.js
-  // scene
-  arView = new THREE.ARView(vrDisplay, renderer);
-
-  // Create our ARReticle, which will continuously fire `hitTest` to trace
-  // the detected surfaces
-  arReticle = new THREE.ARReticle(
-      vrDisplay,
-      0.03, // innerRadius
-      0.04, // outerRadius
-      0xff0077, // color
-      0.25); // easing
-  scene.add(arReticle);
+  daydreamController = new THREE.DaydreamController();  
 }
 
 // Request animation frame loop function
 var lastRenderTimestamp = 0;
+
 function updateAndRender(timestamp) {
   // Clears color
   renderer.clearColor();
-
-  // If there is an ar view, render it (render the camera frame in the 
-  // background and make sure that the pose will match that frame).
-  if (arView) {
-    arView.render(renderer);
-  }
-
-  // If there is an ar reticle, update its position/orientation in the 
-  // normalized center of the screen (0.5, 0.5);
-  if (arReticle) {
-    arReticle.update(0.5, 0.5);
-  }
 
   // If there is a gamepad, update it as the gamepad API is poll based.
   if (daydreamController) {
@@ -256,9 +165,9 @@ function updateAndRender(timestamp) {
     }
   }
 
-  // TODO: Is this required?
-  camera.updateProjectionMatrix();
-
+  if (lastRenderTimestamp === 0) {
+    lastRenderTimestamp = delta;
+  }
   var delta = Math.min(timestamp - lastRenderTimestamp, 500);
   lastRenderTimestamp = timestamp;
 
@@ -283,9 +192,6 @@ function updateAndRender(timestamp) {
 var cameraDirection = new THREE.Vector3();
 
 function spawnModelInFrontOfCamera() {
-  // Get the position of the camera
-  var cameraPosition = camera.position;
-
   // Get the direction the camera is looking to
   camera.updateMatrix();
   cameraDirection.set(
@@ -302,7 +208,7 @@ function spawnModelInFrontOfCamera() {
   // Clone the model and orient and position it correctly
   var newModel = model.clone();
   newModel.quaternion.copy(camera.quaternion);
-  newModel.position.copy(cameraPosition).add(cameraDirection);
+  newModel.position.copy(camera.position).add(cameraDirection);
 
   // Add the model to the scene and to the list of models
   scene.add(newModel);
